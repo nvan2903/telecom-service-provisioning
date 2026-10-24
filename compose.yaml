@@ -1,0 +1,22 @@
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: telecom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: telecom_db
+      POSTGRES_USER: telecom_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before starting PostgreSQL}
+    ports:
+      - "5432:5432"
+    volumes:
+      - telecom_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telecom_user -d telecom_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  telecom_postgres_data:
