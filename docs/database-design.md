@@ -31,7 +31,22 @@ The application creates subscriptions only for active packages, initializes thei
 to `PENDING`, and rejects blank customer references. The database foreign key prevents a
 subscription from referencing a package that does not exist.
 
+### `idempotency_record`
+
+Flyway migration `V3` adds request idempotency:
+
+| Column | Type | Constraints / purpose |
+| --- | --- | --- |
+| `idempotency_key` | `VARCHAR(128)` | Primary key supplied by the API client |
+| `request_hash` | `VARCHAR(64)` | SHA-256 fingerprint of canonical request fields |
+| `subscription_id` | `BIGINT` | Unique required foreign key to `subscription` |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | Required creation time |
+
+The subscription and its idempotency record are saved in the same PostgreSQL transaction.
+Repeating a key with the same request returns the original subscription; using the key
+with a different request returns a conflict.
+
 ## Planned schema
 
-Idempotency records, outbox events, and processed-event records are not implemented yet.
-Add them in later migrations when their application behavior and tests are introduced.
+Outbox events and processed-event records are not implemented yet. Add them in later
+migrations together with the publisher/consumer behavior and tests.

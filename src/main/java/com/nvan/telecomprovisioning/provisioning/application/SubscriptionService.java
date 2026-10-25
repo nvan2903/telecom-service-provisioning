@@ -1,31 +1,48 @@
 package com.nvan.telecomprovisioning.provisioning.application;
 
-import com.nvan.telecomprovisioning.provisioning.domain.ServicePackage;
-import com.nvan.telecomprovisioning.provisioning.domain.Subscription;
-import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.ServicePackageRepository;
-import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.SubscriptionRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 @Service
 public class SubscriptionService {
 
-    private final ServicePackageRepository servicePackageRepository;
-    private final SubscriptionRepository subscriptionRepository;
+    private final SubscriptionTransactionService transactionService;
 
-    public SubscriptionService(
-            ServicePackageRepository servicePackageRepository,
-            SubscriptionRepository subscriptionRepository) {
-        this.servicePackageRepository = servicePackageRepository;
-        this.subscriptionRepository = subscriptionRepository;
+    public SubscriptionService(SubscriptionTransactionService transactionService) {
+        this.transactionService = transactionService;
     }
 
-    @Transactional
-    public Subscription requestSubscription(String customerRef, Long packageId) {
-        ServicePackage servicePackage = servicePackageRepository.findById(packageId)
-                .filter(ServicePackage::isActive)
-                .orElseThrow(() -> new ServicePackageUnavailableException(packageId));
+    public SubscriptionView requestSubscription(String idempotencyKey, String customerRef, Long packageId) {
+        String requestHash = hashRequest(customerRef, packageId);
+        try {
+            return transactionService.requestSubscription(
+                    idempotencyKey, requestHash, customerRef, packageId);
+        } catch (DataIntegrityViolationException exception) {
+            var concurrentResult = transactionService.findByIdempotencyKey(idempotencyKey, requestHash);
+            if (concurrentResult.isPresent()) {
+                return concurrentResult.get();
+            }
+            throw exception;
+        }
+    }
 
-        return subscriptionRepository.save(Subscription.request(customerRef, servicePackage));
+    public SubscriptionView getSubscription(Long subscriptionId) {
+        return transactionService.getSubscription(subscriptionId);
+    }
+
+    private String hashRequest(String customerRef, Long packageId) {
+        String canonicalRequest = customerRef.length() + ":" + customerRef + ":" + packageId;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonicalRequest.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is not available", exception);
+        }
     }
 }

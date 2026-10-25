@@ -91,6 +91,14 @@ public class Subscription {
         return updatedAt;
     }
 
+    public void activate() {
+        if (status != SubscriptionStatus.PENDING) {
+            throw new IllegalStateException("Only pending subscriptions can be activated");
+        }
+        status = SubscriptionStatus.PROCESSING;
+        status = SubscriptionStatus.ACTIVE;
+    }
+
     @PrePersist
     private void setInitialTimestamps() {
         Instant now = Instant.now();
