@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:telecom_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  kafka:
+    consumer:
+      group-id: telecom-provisioning-test
+    listener:
+      auto-startup: false
+provisioning:
+  messaging:
+    activation-topic: subscription-activation-requested
+    consumer-name: subscription-activation
+    publish-timeout: 10s
+  outbox:
+    publisher:
+      enabled: false
