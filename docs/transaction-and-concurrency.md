@@ -2,12 +2,12 @@
 
 ## Subscription request
 
-The application transaction stores the subscription, the idempotency record, and the
-outbox event together. If the transaction fails, none of these records should be committed.
-The idempotency key is the primary key of its record, and the associated subscription has a
-unique constraint. If simultaneous requests race on the same key, the losing request
-re-reads and returns the winning result when its payload hash matches; a different payload
-is a conflict.
+The application transaction stores an idempotency-key claim, subscription, idempotency
+record, and outbox event together. It inserts and flushes the unique claim before writing
+the subscription so simultaneous transactions using the same key serialize at the database
+constraint. If the transaction fails, the claim and all associated records roll back.
+After a concurrent conflict, the losing request re-reads and returns the winning result
+when its payload hash matches; a different payload is a conflict.
 
 The application test suite verifies same-key concurrent requests create one subscription,
 one idempotency record, and one outbox event.

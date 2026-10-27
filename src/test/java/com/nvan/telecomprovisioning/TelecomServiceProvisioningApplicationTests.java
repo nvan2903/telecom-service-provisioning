@@ -201,6 +201,7 @@ class TelecomServiceProvisioningApplicationTests {
                 jdbcTemplate.update("delete from subscription where id = ?", subscriptionId);
             }
             jdbcTemplate.update("delete from idempotency_record where idempotency_key = ?", idempotencyKey);
+            jdbcTemplate.update("delete from idempotency_key_claim where idempotency_key = ?", idempotencyKey);
             servicePackageRepository.deleteById(servicePackage.getId());
         }
     }

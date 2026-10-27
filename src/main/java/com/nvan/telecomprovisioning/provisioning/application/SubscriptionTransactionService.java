@@ -1,9 +1,11 @@
 package com.nvan.telecomprovisioning.provisioning.application;
 
 import com.nvan.telecomprovisioning.provisioning.domain.IdempotencyRecord;
+import com.nvan.telecomprovisioning.provisioning.domain.IdempotencyKeyClaim;
 import com.nvan.telecomprovisioning.provisioning.domain.ServicePackage;
 import com.nvan.telecomprovisioning.provisioning.domain.Subscription;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.IdempotencyRecordRepository;
+import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.IdempotencyKeyClaimRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.ServicePackageRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.SubscriptionRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.OutboxEvent;
@@ -22,6 +24,7 @@ public class SubscriptionTransactionService {
 
     private final ServicePackageRepository servicePackageRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final IdempotencyKeyClaimRepository idempotencyKeyClaimRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final EventPayloadCodec eventPayloadCodec;
@@ -29,11 +32,13 @@ public class SubscriptionTransactionService {
     public SubscriptionTransactionService(
             ServicePackageRepository servicePackageRepository,
             SubscriptionRepository subscriptionRepository,
+            IdempotencyKeyClaimRepository idempotencyKeyClaimRepository,
             IdempotencyRecordRepository idempotencyRecordRepository,
             OutboxEventRepository outboxEventRepository,
             EventPayloadCodec eventPayloadCodec) {
         this.servicePackageRepository = servicePackageRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.idempotencyKeyClaimRepository = idempotencyKeyClaimRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.eventPayloadCodec = eventPayloadCodec;
@@ -46,6 +51,8 @@ public class SubscriptionTransactionService {
         if (existingSubscription.isPresent()) {
             return existingSubscription.get();
         }
+
+        idempotencyKeyClaimRepository.saveAndFlush(new IdempotencyKeyClaim(idempotencyKey));
 
         ServicePackage servicePackage = servicePackageRepository.findById(packageId)
                 .filter(ServicePackage::isActive)
