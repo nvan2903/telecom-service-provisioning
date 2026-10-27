@@ -12,13 +12,14 @@ import com.nvan.telecomprovisioning.provisioning.messaging.EventPayloadCodec;
 import com.nvan.telecomprovisioning.provisioning.messaging.OutboxEventRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.ProcessedEventRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.SubscriptionActivationProcessor;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -151,7 +152,7 @@ class TelecomServiceProvisioningApplicationTests {
         assertThat(outboxEventRepository.count()).isEqualTo(1);
     }
 
-    @Test
+    @RepeatedTest(3)
     void concurrentRequestsWithTheSameIdempotencyKeyCreateOneSubscription() throws Exception {
         String uniqueSuffix = UUID.randomUUID().toString();
         ServicePackage servicePackage = servicePackageRepository.save(
@@ -180,20 +181,35 @@ class TelecomServiceProvisioningApplicationTests {
             var secondResult = secondRequest.get(10, TimeUnit.SECONDS);
 
             assertThat(firstResult.id()).isEqualTo(secondResult.id());
-            assertThat(subscriptionRepository.count()).isEqualTo(1);
-            assertThat(idempotencyRecordRepository.count()).isEqualTo(1);
-            assertThat(outboxEventRepository.count()).isEqualTo(1);
+            assertThat(countRows("subscription", "package_id", servicePackage.getId())).isEqualTo(1);
+            assertThat(countRows("idempotency_record", "idempotency_key", idempotencyKey)).isEqualTo(1);
+            assertThat(countRows("outbox_event", "aggregate_id", firstResult.id().toString())).isEqualTo(1);
         } finally {
             start.countDown();
-            idempotencyRecordRepository.findById(idempotencyKey).ifPresent(record -> {
-                String aggregateId = record.getSubscription().getId().toString();
+            for (Long subscriptionId : jdbcTemplate.queryForList(
+                    "select id from subscription where package_id = ?",
+                    Long.class,
+                    servicePackage.getId())) {
+                String aggregateId = subscriptionId.toString();
+                jdbcTemplate.update(
+                        "delete from processed_event where event_id in "
+                                + "(select event_id from outbox_event where aggregate_id = ?)",
+                        aggregateId);
                 jdbcTemplate.update("delete from outbox_event where aggregate_id = ?", aggregateId);
-                Long subscriptionId = record.getSubscription().getId();
-                idempotencyRecordRepository.deleteById(idempotencyKey);
-                subscriptionRepository.deleteById(subscriptionId);
-            });
+                jdbcTemplate.update(
+                        "delete from idempotency_record where subscription_id = ?", subscriptionId);
+                jdbcTemplate.update("delete from subscription where id = ?", subscriptionId);
+            }
+            jdbcTemplate.update("delete from idempotency_record where idempotency_key = ?", idempotencyKey);
             servicePackageRepository.deleteById(servicePackage.getId());
         }
+    }
+
+    private long countRows(String table, String column, Object value) {
+        return jdbcTemplate.queryForObject(
+                "select count(*) from " + table + " where " + column + " = ?",
+                Long.class,
+                value);
     }
 
     @Test
