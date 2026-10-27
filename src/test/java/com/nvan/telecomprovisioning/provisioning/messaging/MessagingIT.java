@@ -25,6 +25,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
 import java.util.TimeZone;
@@ -67,7 +68,7 @@ class MessagingIT {
         registry.add("spring.kafka.listener.auto-startup", () -> true);
         registry.add("provisioning.messaging.activation-topic", () -> TOPIC);
         registry.add("provisioning.outbox.publisher.enabled", () -> true);
-        registry.add("provisioning.outbox.publisher.fixed-delay", () -> "100ms");
+        registry.add("provisioning.outbox.publisher.fixed-delay", () -> "3600000");
         registry.add("provisioning.outbox.publisher.batch-size", () -> 20);
     }
 
@@ -79,6 +80,12 @@ class MessagingIT {
 
     @Autowired
     private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private OutboxStateService outboxStateService;
+
+    @Autowired
+    private OutboxPublisher outboxPublisher;
 
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -93,6 +100,7 @@ class MessagingIT {
 
         var requested = subscriptionService.requestSubscription(
                 "it-" + UUID.randomUUID(), "integration-customer", servicePackage.getId());
+        outboxPublisher.publishPendingEvents();
 
         awaitCondition(() -> subscriptionService.getSubscription(requested.id()).status()
                 == SubscriptionStatus.ACTIVE);
@@ -103,7 +111,34 @@ class MessagingIT {
                 .orElseThrow();
         assertThat(publishedEvent.getPublishedAt()).isNotNull();
         assertThat(publishedEvent.getAttempts()).isEqualTo(1);
+    }
 
+    @Test
+    void retriesPersistedOutboxEventAfterBackoff() throws Exception {
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("RETRY-" + UUID.randomUUID(), "Retry integration package", true));
+        var requested = subscriptionService.requestSubscription(
+                "retry-" + UUID.randomUUID(), "retry-customer", servicePackage.getId());
+        OutboxEvent event = outboxEventRepository.findAll().stream()
+                .filter(candidate -> candidate.getAggregateId().equals(requested.id().toString()))
+                .findFirst()
+                .orElseThrow();
+
+        outboxStateService.recordFailure(
+                event.getEventId(), "simulated temporary Kafka outage", Instant.now().plusMillis(500));
+
+        assertThat(outboxStateService.findReady(20))
+                .noneMatch(candidate -> candidate.getEventId().equals(event.getEventId()));
+        awaitCondition(() -> outboxStateService.findReady(20).stream()
+                .anyMatch(candidate -> candidate.getEventId().equals(event.getEventId())));
+
+        outboxPublisher.publishPendingEvents();
+
+        awaitCondition(() -> subscriptionService.getSubscription(requested.id()).status()
+                == SubscriptionStatus.ACTIVE);
+        OutboxEvent retriedEvent = outboxEventRepository.findById(event.getEventId()).orElseThrow();
+        assertThat(retriedEvent.getPublishedAt()).isNotNull();
+        assertThat(retriedEvent.getAttempts()).isEqualTo(2);
     }
 
     @Test

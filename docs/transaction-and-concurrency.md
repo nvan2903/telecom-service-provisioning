@@ -24,5 +24,7 @@ database transaction. Kafka listener failures receive three retries with a fixed
 backoff before publication to `<activation-topic>.DLT`.
 
 The Testcontainers integration test exercises successful PostgreSQL-to-Kafka outbox
-publication, activation, retry exhaustion, and DLT delivery. Recovery after broker outage,
-multiple publisher instances, and production-scale concurrency remain unverified.
+publication, activation, retry of persisted outbox state after backoff, consumer retry
+exhaustion, and DLT delivery. It simulates a recorded temporary outbox failure while Kafka
+is available; an actual broker outage/restart, multiple publisher instances, and
+production-scale concurrency remain unverified.

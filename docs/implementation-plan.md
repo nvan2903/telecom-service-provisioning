@@ -17,8 +17,9 @@
 
 1. Review and merge the container-backed integration and CI changes into
    `integration/pre-develop`.
-2. Consider adding failure/restart recovery tests for the outbox publisher and documenting
-   the resulting operational guarantees.
+2. Extend the outbox recovery test to cover a real broker interruption/restart and multiple
+   publisher instances; the current test verifies persisted retry state and republishing
+   after backoff, but does not stop or restart Kafka.
 3. Assess security, observability, and deployment requirements before selecting production
    infrastructure.
 
