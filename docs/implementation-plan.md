@@ -15,10 +15,9 @@
 
 ## Next work
 
-1. Extend the outbox integration tests to cover a real broker interruption/restart and
-   multiple concurrent publisher instances. The current tests verify persisted retry after
-   backoff and consumer idempotency under duplicate Kafka delivery, but do not stop or
-   restart Kafka or coordinate multiple publishers.
+1. Evaluate coordination/claiming for multiple publisher processes. Integration coverage
+   now runs concurrent publisher invocations and verifies outbox delivery, but the
+   invocations share one application instance and do not test multi-instance locking.
 2. Assess security, observability, and deployment requirements before selecting production
    infrastructure.
 

@@ -23,6 +23,9 @@ same PostgreSQL transaction as its `subscription` and `idempotency_record`. The 
 publisher sends the stored payload and marks the row published only after Kafka
 acknowledges it. A crash after Kafka acknowledgement but before the database update can
 cause a duplicate publish; consumers must use `eventId` for idempotency.
+If Kafka is unavailable, the publisher records the failure and schedules a retry. The
+integration suite pauses and unpauses its Kafka container to verify the persisted outbox
+event is published after the broker resumes service.
 
 The activation consumer validates event type and schema version, then inserts
 `processed_event(event_id, consumer_name)` and moves the associated subscription from

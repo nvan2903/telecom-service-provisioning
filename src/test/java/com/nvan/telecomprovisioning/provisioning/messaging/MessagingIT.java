@@ -1,9 +1,12 @@
 package com.nvan.telecomprovisioning.provisioning.messaging;
 
+import com.github.dockerjava.api.DockerClient;
 import com.nvan.telecomprovisioning.provisioning.application.SubscriptionService;
 import com.nvan.telecomprovisioning.provisioning.domain.ServicePackage;
 import com.nvan.telecomprovisioning.provisioning.domain.SubscriptionStatus;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.ServicePackageRepository;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -19,6 +22,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -27,11 +31,16 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,6 +77,7 @@ class MessagingIT {
         registry.add("spring.kafka.consumer.auto-offset-reset", () -> "earliest");
         registry.add("spring.kafka.listener.auto-startup", () -> true);
         registry.add("provisioning.messaging.activation-topic", () -> TOPIC);
+        registry.add("provisioning.messaging.publish-timeout", () -> "3s");
         registry.add("provisioning.outbox.publisher.enabled", () -> true);
         registry.add("provisioning.outbox.publisher.fixed-delay", () -> "3600000");
         registry.add("provisioning.outbox.publisher.batch-size", () -> 20);
@@ -145,6 +155,103 @@ class MessagingIT {
         assertThat(retriedEvent.getAttempts()).isEqualTo(2);
     }
 
+    @Test
+    void republishesPersistedOutboxEventAfterKafkaBrokerInterruption() throws Exception {
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("BR-" + UUID.randomUUID(),
+                        "Broker outage package", true));
+        var requested = subscriptionService.requestSubscription(
+                "broker-restart-" + UUID.randomUUID(), "broker-restart-customer",
+                servicePackage.getId());
+        OutboxEvent event = outboxEventRepository.findAll().stream()
+                .filter(candidate -> candidate.getAggregateId().equals(requested.id().toString()))
+                .findFirst()
+                .orElseThrow();
+
+        DockerClient dockerClient = DockerClientFactory.instance().client();
+        String kafkaContainerId = KAFKA.getContainerId();
+        try {
+            dockerClient.pauseContainerCmd(kafkaContainerId).exec();
+
+            outboxPublisher.publishPendingEvents();
+
+            OutboxEvent failedEvent = outboxEventRepository.findById(event.getEventId())
+                    .orElseThrow();
+            assertThat(failedEvent.getPublishedAt()).isNull();
+            assertThat(failedEvent.getAttempts()).isEqualTo(1);
+            assertThat(failedEvent.getLastError()).isNotBlank();
+        } finally {
+            dockerClient.unpauseContainerCmd(kafkaContainerId).exec();
+        }
+
+        awaitKafkaAvailable();
+        awaitCondition(() -> outboxStateService.findReady(20).stream()
+                .anyMatch(candidate -> candidate.getEventId().equals(event.getEventId())));
+
+        outboxPublisher.publishPendingEvents();
+
+        awaitCondition(() -> subscriptionService.getSubscription(requested.id()).status()
+                == SubscriptionStatus.ACTIVE);
+        OutboxEvent recoveredEvent = outboxEventRepository.findById(event.getEventId())
+                .orElseThrow();
+        assertThat(recoveredEvent.getPublishedAt()).isNotNull();
+        assertThat(recoveredEvent.getAttempts()).isEqualTo(2);
+    }
+
+    @Test
+    void concurrentPublishersDoNotLoseOutboxEvents() throws Exception {
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("CP-" + UUID.randomUUID(), "Concurrent publisher package", true));
+        List<Long> subscriptionIds = new ArrayList<>();
+        for (int index = 0; index < 8; index++) {
+            var requested = subscriptionService.requestSubscription(
+                    "concurrent-publisher-" + UUID.randomUUID(),
+                    "concurrent-publisher-customer-" + index, servicePackage.getId());
+            subscriptionIds.add(requested.id());
+        }
+        List<OutboxEvent> events = outboxEventRepository.findAll().stream()
+                .filter(event -> subscriptionIds.contains(Long.valueOf(event.getAggregateId())))
+                .toList();
+        assertThat(events).hasSize(subscriptionIds.size());
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var publisher = (Runnable) () -> {
+                ready.countDown();
+                try {
+                    if (!start.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Timed out waiting to start concurrent publisher");
+                    }
+                    outboxPublisher.publishPendingEvents();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Concurrent publisher was interrupted", exception);
+                }
+            };
+            var firstPublisher = executor.submit(publisher);
+            var secondPublisher = executor.submit(publisher);
+
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            firstPublisher.get(30, TimeUnit.SECONDS);
+            secondPublisher.get(30, TimeUnit.SECONDS);
+        }
+
+        awaitCondition(() -> subscriptionIds.stream()
+                .allMatch(id -> subscriptionService.getSubscription(id).status()
+                        == SubscriptionStatus.ACTIVE));
+
+        for (OutboxEvent event : events) {
+            OutboxEvent publishedEvent = outboxEventRepository.findById(event.getEventId())
+                    .orElseThrow();
+            assertThat(publishedEvent.getPublishedAt()).isNotNull();
+            assertThat(processedEventRepository.countByEventIdAndConsumerName(
+                    event.getEventId(), "subscription-activation"))
+                    .isEqualTo(1);
+        }
+    }
+
     @RepeatedTest(3)
     void duplicateKafkaDeliveryActivatesSubscriptionOnlyOnce() throws Exception {
         ServicePackage servicePackage = servicePackageRepository.save(
@@ -218,6 +325,21 @@ class MessagingIT {
             Thread.sleep(100);
         }
         assertThat(condition.getAsBoolean()).isTrue();
+    }
+
+    private void awaitKafkaAvailable() throws Exception {
+        Properties properties = new Properties();
+        properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        properties.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 1_000);
+        properties.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 20_000);
+
+        try (Admin admin = Admin.create(properties)) {
+            try {
+                admin.describeCluster().nodes().get(20, TimeUnit.SECONDS);
+            } catch (ExecutionException | TimeoutException exception) {
+                throw new AssertionError("Kafka did not recover after container unpause", exception);
+            }
+        }
     }
 
     @FunctionalInterface
