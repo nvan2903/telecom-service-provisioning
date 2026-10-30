@@ -28,7 +28,8 @@ The activation consumer validates event type and schema version, then inserts
 `processed_event(event_id, consumer_name)` and moves the associated subscription from
 `PENDING` to `ACTIVE` in the same database transaction. Repeated delivery of an already
 processed event is acknowledged without applying the state change again. Activation is
-simulated; no external telecom network is called.
+simulated; no external telecom network is called. The integration suite verifies repeated
+delivery of the same event does not apply activation more than once.
 
 ## Retries and dead-letter topic
 

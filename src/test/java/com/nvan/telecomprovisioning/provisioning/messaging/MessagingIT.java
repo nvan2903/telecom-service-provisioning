@@ -8,6 +8,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -82,6 +83,9 @@ class MessagingIT {
     private OutboxEventRepository outboxEventRepository;
 
     @Autowired
+    private ProcessedEventRepository processedEventRepository;
+
+    @Autowired
     private OutboxStateService outboxStateService;
 
     @Autowired
@@ -139,6 +143,35 @@ class MessagingIT {
         OutboxEvent retriedEvent = outboxEventRepository.findById(event.getEventId()).orElseThrow();
         assertThat(retriedEvent.getPublishedAt()).isNotNull();
         assertThat(retriedEvent.getAttempts()).isEqualTo(2);
+    }
+
+    @RepeatedTest(3)
+    void duplicateKafkaDeliveryActivatesSubscriptionOnlyOnce() throws Exception {
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("DUPLICATE-" + UUID.randomUUID(),
+                        "Duplicate delivery package", true));
+        var requested = subscriptionService.requestSubscription(
+                "duplicate-" + UUID.randomUUID(), "duplicate-customer", servicePackage.getId());
+        OutboxEvent event = outboxEventRepository.findAll().stream()
+                .filter(candidate -> candidate.getAggregateId().equals(requested.id().toString()))
+                .findFirst()
+                .orElseThrow();
+        int decodeAttemptsBefore = countingEventPayloadCodec.getDecodeAttempts();
+
+        outboxPublisher.publishPendingEvents();
+        awaitCondition(() -> subscriptionService.getSubscription(requested.id()).status()
+                == SubscriptionStatus.ACTIVE);
+
+        kafkaTemplate.send(TOPIC, event.getAggregateId(), event.getPayload())
+                .get(10, TimeUnit.SECONDS);
+        awaitCondition(() -> countingEventPayloadCodec.getDecodeAttempts()
+                >= decodeAttemptsBefore + 2);
+
+        assertThat(processedEventRepository.countByEventIdAndConsumerName(
+                event.getEventId(), "subscription-activation"))
+                .isEqualTo(1);
+        assertThat(subscriptionService.getSubscription(requested.id()).status())
+                .isEqualTo(SubscriptionStatus.ACTIVE);
     }
 
     @Test
