@@ -15,12 +15,11 @@
 
 ## Next work
 
-1. Review and merge the container-backed integration and CI changes into
-   `integration/pre-develop`.
-2. Extend the outbox recovery test to cover a real broker interruption/restart and multiple
-   publisher instances; the current test verifies persisted retry state and republishing
-   after backoff, but does not stop or restart Kafka.
-3. Assess security, observability, and deployment requirements before selecting production
+1. Extend the outbox integration tests to cover a real broker interruption/restart and
+   multiple concurrent publisher instances. The current tests verify persisted retry after
+   backoff and consumer idempotency under duplicate Kafka delivery, but do not stop or
+   restart Kafka or coordinate multiple publishers.
+2. Assess security, observability, and deployment requirements before selecting production
    infrastructure.
 
 ## Verification commands
