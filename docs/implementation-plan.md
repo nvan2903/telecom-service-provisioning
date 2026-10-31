@@ -15,9 +15,10 @@
 
 ## Next work
 
-1. Evaluate coordination/claiming for multiple publisher processes. Integration coverage
-   now runs concurrent publisher invocations and verifies outbox delivery, but the
-   invocations share one application instance and do not test multi-instance locking.
+1. Validate lease recovery after a real application process crash and tune claim duration
+   for deployment timeouts. Integration coverage verifies expired claims can be reclaimed
+   and exercises PostgreSQL claims under concurrent invocations, but these share one
+   application instance.
 2. Assess security, observability, and deployment requirements before selecting production
    infrastructure.
 

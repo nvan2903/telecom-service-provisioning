@@ -58,3 +58,10 @@ using the key with a different request returns a conflict.
 
 Migration `V4` adds `outbox_event` and `processed_event`. Outbox records are retained for
 publication/recovery and processed-event records deduplicate consumer deliveries.
+
+Migration `V6` adds a nullable claim token and lease expiration to `outbox_event`.
+Publishers claim ready rows with PostgreSQL `FOR UPDATE SKIP LOCKED` in a short database
+transaction, then publish outside that transaction. A claim expires if a publisher stops
+before completing the row; successful publication or a recorded failure clears the claim.
+The configured lease (`provisioning.outbox.publisher.claim-duration`) must exceed the
+Kafka publish timeout.
