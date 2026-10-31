@@ -2,24 +2,33 @@ package com.nvan.telecomprovisioning;
 
 import com.nvan.telecomprovisioning.provisioning.application.ServicePackageUnavailableException;
 import com.nvan.telecomprovisioning.provisioning.application.SubscriptionService;
+import com.nvan.telecomprovisioning.provisioning.application.SubscriptionView;
 import com.nvan.telecomprovisioning.provisioning.domain.ServicePackage;
 import com.nvan.telecomprovisioning.provisioning.domain.SubscriptionStatus;
+import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.IdempotencyRecordRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.ServicePackageRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.SubscriptionRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.EventPayloadCodec;
 import com.nvan.telecomprovisioning.provisioning.messaging.OutboxEventRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.ProcessedEventRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.SubscriptionActivationProcessor;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.net.URI;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -44,7 +53,13 @@ class TelecomServiceProvisioningApplicationTests {
     private SubscriptionRepository subscriptionRepository;
 
     @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
     private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private ProcessedEventRepository processedEventRepository;
@@ -135,6 +150,67 @@ class TelecomServiceProvisioningApplicationTests {
 
         assertThat(subscriptionRepository.count()).isEqualTo(1);
         assertThat(outboxEventRepository.count()).isEqualTo(1);
+    }
+
+    @RepeatedTest(3)
+    void concurrentRequestsWithTheSameIdempotencyKeyCreateOneSubscription() throws Exception {
+        String uniqueSuffix = UUID.randomUUID().toString();
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("CONCURRENT-" + uniqueSuffix, "Concurrent test package", true));
+        String idempotencyKey = "concurrent-" + uniqueSuffix;
+        String customerRef = "customer-concurrent";
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Callable<SubscriptionView> request = () -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to start concurrent request");
+                }
+                return subscriptionService.requestSubscription(
+                        idempotencyKey, customerRef, servicePackage.getId());
+            };
+
+            var firstRequest = executor.submit(request);
+            var secondRequest = executor.submit(request);
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            var firstResult = firstRequest.get(10, TimeUnit.SECONDS);
+            var secondResult = secondRequest.get(10, TimeUnit.SECONDS);
+
+            assertThat(firstResult.id()).isEqualTo(secondResult.id());
+            assertThat(countRows("subscription", "package_id", servicePackage.getId())).isEqualTo(1);
+            assertThat(countRows("idempotency_record", "idempotency_key", idempotencyKey)).isEqualTo(1);
+            assertThat(countRows("outbox_event", "aggregate_id", firstResult.id().toString())).isEqualTo(1);
+        } finally {
+            start.countDown();
+            for (Long subscriptionId : jdbcTemplate.queryForList(
+                    "select id from subscription where package_id = ?",
+                    Long.class,
+                    servicePackage.getId())) {
+                String aggregateId = subscriptionId.toString();
+                jdbcTemplate.update(
+                        "delete from processed_event where event_id in "
+                                + "(select event_id from outbox_event where aggregate_id = ?)",
+                        aggregateId);
+                jdbcTemplate.update("delete from outbox_event where aggregate_id = ?", aggregateId);
+                jdbcTemplate.update(
+                        "delete from idempotency_record where subscription_id = ?", subscriptionId);
+                jdbcTemplate.update("delete from subscription where id = ?", subscriptionId);
+            }
+            jdbcTemplate.update("delete from idempotency_record where idempotency_key = ?", idempotencyKey);
+            jdbcTemplate.update("delete from idempotency_key_claim where idempotency_key = ?", idempotencyKey);
+            servicePackageRepository.deleteById(servicePackage.getId());
+        }
+    }
+
+    private long countRows(String table, String column, Object value) {
+        return jdbcTemplate.queryForObject(
+                "select count(*) from " + table + " where " + column + " = ?",
+                Long.class,
+                value);
     }
 
     @Test

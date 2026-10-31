@@ -57,6 +57,12 @@ Run tests:
 .\mvnw.cmd test
 ```
 
+Run PostgreSQL/Kafka container integration tests (requires Docker):
+
+```powershell
+.\mvnw.cmd -Pintegration-tests verify
+```
+
 Stop the local database:
 
 ```powershell

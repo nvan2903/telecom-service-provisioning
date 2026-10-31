@@ -46,6 +46,12 @@ public class OutboxEvent {
     @Column(name = "last_error", length = 2000)
     private String lastError;
 
+    @Column(name = "claim_token")
+    private UUID claimToken;
+
+    @Column(name = "claimed_until")
+    private Instant claimedUntil;
+
     @Version
     @Column(nullable = false)
     private long version;
@@ -73,6 +79,7 @@ public class OutboxEvent {
             this.publishedAt = Objects.requireNonNull(publishedAt, "publishedAt");
             this.attempts++;
             this.lastError = null;
+            clearClaim();
         }
     }
 
@@ -80,6 +87,21 @@ public class OutboxEvent {
         attempts++;
         lastError = truncate(requireText(error, "error"), 2000);
         nextAttemptAt = Objects.requireNonNull(retryAt, "retryAt");
+        clearClaim();
+    }
+
+    public void claim(UUID claimToken, Instant claimedUntil) {
+        this.claimToken = Objects.requireNonNull(claimToken, "claimToken");
+        this.claimedUntil = Objects.requireNonNull(claimedUntil, "claimedUntil");
+    }
+
+    public boolean isClaimedBy(UUID claimToken) {
+        return this.claimToken != null && this.claimToken.equals(claimToken);
+    }
+
+    private void clearClaim() {
+        claimToken = null;
+        claimedUntil = null;
     }
 
     public UUID getEventId() {
@@ -120,6 +142,14 @@ public class OutboxEvent {
 
     public String getLastError() {
         return lastError;
+    }
+
+    public UUID getClaimToken() {
+        return claimToken;
+    }
+
+    public Instant getClaimedUntil() {
+        return claimedUntil;
     }
 
     @PrePersist

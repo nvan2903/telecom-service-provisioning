@@ -47,3 +47,4 @@ provisioning:
       enabled: true
       fixed-delay: 1s
       batch-size: 50
+      claim-duration: 30s

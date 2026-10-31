@@ -2,14 +2,25 @@
 
 ## Current state
 
-This repository is a small Spring Boot/Maven starter, not yet a product implementation:
+The repository implements the first subscription-provisioning workflow as a Spring Boot
+modular monolith:
 
-- The Maven source and test roots already follow the standard layout.
-- The Java source currently contains only the application entry point.
-- Resources contain Spring configuration and one Flyway migration for a health-check table.
-- `compose.yaml` provides a local PostgreSQL dependency.
-- There are no business modules, deployment manifests, CI workflows, or operational scripts yet.
-- The requested documentation files exist but have not been populated.
+- REST endpoints list active packages, accept idempotent subscription requests, and return
+  subscription status.
+- Flyway migrations define package, subscription, idempotency, outbox, and processed-event
+  tables. Hibernate validates the schema rather than creating it.
+- Subscription creation persists the subscription, idempotency record, and outbox event in
+  one database transaction.
+- A scheduled publisher sends pending outbox events to Kafka. A Kafka consumer records
+  processed event IDs and activates subscriptions transactionally.
+- The consumer uses bounded retries and routes exhausted messages to a dead-letter topic.
+- Unit/application tests use H2. The `integration-tests` Maven profile uses Testcontainers
+  to exercise PostgreSQL and Kafka together.
+- Docker Compose provides PostgreSQL and Kafka for local development. GitHub Actions runs
+  the Maven verification workflow for pull requests and pushes to maintained branches.
+
+The activation operation is simulated; no telecom network is called. Integration tests
+exercise local container behavior, not production-scale availability or broker durability.
 
 There is no reason to split this codebase into multiple deployable services or Maven modules
 yet. Creating empty package trees for every future layer would add ceremony without giving
@@ -59,11 +70,10 @@ layers it actually needs.
 └── src/
 ```
 
-Add `infra/` for real infrastructure-as-code, `.github/workflows/` for CI/CD definitions,
-and `scripts/` for repeatable repository tasks when those assets are introduced. Keep
-environment-specific deployment configuration out of application source. Do not add
-placeholder directories or duplicate configuration until there is a concrete artifact to
-put in them.
+Add `infra/` for real infrastructure-as-code and `scripts/` for repeatable repository
+tasks when those assets are introduced. Keep environment-specific deployment configuration
+out of application source. Do not add placeholder directories or duplicate configuration
+until there is a concrete artifact to put in them.
 
 ## Dependency and change rules
 
@@ -81,7 +91,8 @@ put in them.
 
 ## Known follow-up before production
 
-The current datasource credentials are hard-coded for local development, SQL logging is
-enabled, and no production deployment or CI/CD structure exists. These are separate
-configuration and operations tasks; the local starter layout should not be treated as
-production-ready.
+Local Compose credentials and plaintext Kafka are development-only. Before deployment,
+configure managed secrets, authenticated/encrypted broker access, explicit API security,
+topic provisioning and retention, and production database settings. Add deployment
+infrastructure and operational monitoring only when the target environment is selected.
+The local integration tests do not establish production readiness.

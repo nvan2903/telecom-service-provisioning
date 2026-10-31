@@ -42,11 +42,26 @@ Flyway migration `V3` adds request idempotency:
 | `subscription_id` | `BIGINT` | Unique required foreign key to `subscription` |
 | `created_at` | `TIMESTAMP WITH TIME ZONE` | Required creation time |
 
-The subscription and its idempotency record are saved in the same PostgreSQL transaction.
-Repeating a key with the same request returns the original subscription; using the key
-with a different request returns a conflict.
+### `idempotency_key_claim`
 
-## Planned schema
+Flyway migration `V5` adds a unique claim row for each idempotency key. A request inserts
+and flushes the claim before creating subscription data, in the same transaction. The
+unique key serializes simultaneous requests across application instances; if the request
+fails, its claim rolls back with the transaction. Successful claims are retained alongside
+the corresponding `idempotency_record`.
 
-Outbox events and processed-event records are not implemented yet. Add them in later
-migrations together with the publisher/consumer behavior and tests.
+The subscription, idempotency record, claim, and outbox event are saved in one PostgreSQL
+transaction. Repeating a key with the same request returns the original subscription;
+using the key with a different request returns a conflict.
+
+## Messaging schema
+
+Migration `V4` adds `outbox_event` and `processed_event`. Outbox records are retained for
+publication/recovery and processed-event records deduplicate consumer deliveries.
+
+Migration `V6` adds a nullable claim token and lease expiration to `outbox_event`.
+Publishers claim ready rows with PostgreSQL `FOR UPDATE SKIP LOCKED` in a short database
+transaction, then publish outside that transaction. A claim expires if a publisher stops
+before completing the row; successful publication or a recorded failure clears the claim.
+The configured lease (`provisioning.outbox.publisher.claim-duration`) must exceed the
+Kafka publish timeout.
