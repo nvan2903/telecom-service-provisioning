@@ -3,14 +3,59 @@ spring:
   application:
     name: telecom-service-provisioning
   datasource:
-    url: jdbc:postgresql://localhost:5432/telecom_db
-    username: telecom_user
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/telecom_db}
+    username: ${DB_USERNAME:telecom_user}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
-    show-sql: true
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
   flyway:
     enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 120000
+    consumer:
+      group-id: telecom-provisioning-activation
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+      concurrency: 1
+
+provisioning:
+  telecom:
+    provider: ${TELECOM_PROVIDER:mock}
+  messaging:
+    activation-topic: ${ACTIVATION_TOPIC:subscription-activation-requested}
+    consumer-name: subscription-activation
+    publish-timeout: 10s
+  outbox:
+    publisher:
+      enabled: true
+      fixed-delay: 1s
+      batch-size: 50
+      claim-duration: 30s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

@@ -1,0 +1,4 @@
+CREATE TABLE idempotency_key_claim (
+    idempotency_key VARCHAR(128) PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
