@@ -5,22 +5,28 @@
 - JDK 25
 - Docker Desktop with Linux containers
 
-## Start PostgreSQL and Kafka
+## Start the application, PostgreSQL, and Kafka
 
 From the repository root, set a local database password in PowerShell; do not commit it:
 
 ```powershell
 $env:POSTGRES_PASSWORD = Read-Host "Local PostgreSQL password"
 $env:DB_PASSWORD = $env:POSTGRES_PASSWORD
-docker compose up -d postgres kafka
+docker compose up -d --build
 ```
 
-For instructions on changing a password for an existing Compose volume, see the root
-`README.md`.
+Compose builds and starts the application with the in-memory `mock` telecom provider.
+The application, PostgreSQL, and Kafka host ports bind to loopback only. The Spring
+Security default `user` password is generated at startup; read it from
+`docker compose logs app`. For instructions on changing a password for an existing
+Compose volume, see the root `README.md`.
 
-## Run the application and tests
+To run the app from Maven on the host instead, start only its dependencies and run the
+application:
 
 ```powershell
+docker compose stop app
+docker compose up -d postgres kafka
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -29,7 +35,7 @@ the application startup log. In another PowerShell window, seed a synthetic pack
 exercise the authenticated API:
 
 ```powershell
-docker exec telecom-postgres psql -U telecom_user -d telecom_db -c "INSERT INTO service_package (code, name, active) VALUES ('DEMO-MOBILE-10', 'Demo Mobile 10 GB', TRUE) ON CONFLICT (code) DO NOTHING;"
+docker compose exec postgres psql -U telecom_user -d telecom_db -c "INSERT INTO service_package (code, name, active) VALUES ('DEMO-MOBILE-10', 'Demo Mobile 10 GB', TRUE) ON CONFLICT (code) DO NOTHING;"
 
 $baseUrl = "http://localhost:8080"
 $credential = Get-Credential -UserName "user"
@@ -86,9 +92,11 @@ $subscription
 ```
 
 The API accepts the request with `202 Accepted` and initially returns `PENDING`; Kafka
-publication and activation happen asynchronously. The default local CSRF form token is
-passed as a request parameter for this demo only; production API clients should use a
-deliberately configured security and CSRF integration, not copy this query-string pattern.
+publication and mock activation happen asynchronously. `ACTIVE` means the local mock
+accepted the request, not that a real telecom service was provisioned. The default local
+CSRF form token is passed as a request parameter for this demo only; production API clients
+should use a deliberately configured security and CSRF integration, not copy this
+query-string pattern.
 A new idempotency key is used for each demo run. Keep the generated password in memory
 only and never commit it.
 

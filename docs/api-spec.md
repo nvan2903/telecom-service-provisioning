@@ -3,6 +3,9 @@
 The API persists the subscription, idempotency record, and outbox event atomically. Kafka
 publishing and activation happen asynchronously. A newly created subscription initially
 remains `PENDING`, so `POST /api/subscriptions` returns `202 Accepted`.
+In the local Compose setup, a `mock` telecom provider accepts the activation request and
+the subscription later becomes `ACTIVE`; this status demonstrates the workflow only and
+does not mean a real carrier service was provisioned.
 
 All endpoints currently use Spring Security defaults and require authentication. During
 local development Spring prints the generated `user` password on startup; POST requests

@@ -11,16 +11,21 @@ modular monolith:
   tables. Hibernate validates the schema rather than creating it.
 - Subscription creation persists the subscription, idempotency record, and outbox event in
   one database transaction.
-- A scheduled publisher sends pending outbox events to Kafka. A Kafka consumer records
-  processed event IDs and activates subscriptions transactionally.
+- A scheduled publisher sends pending outbox events to Kafka. A Kafka consumer validates
+  events, requests activation through an application port, and records processed event IDs
+  with local subscription activation transactionally. Compose selects an in-memory mock;
+  no carrier is called.
 - The consumer uses bounded retries and routes exhausted messages to a dead-letter topic.
 - Unit/application tests use H2. The `integration-tests` Maven profile uses Testcontainers
   to exercise PostgreSQL and Kafka together.
-- Docker Compose provides PostgreSQL and Kafka for local development. GitHub Actions runs
+- Docker Compose provides the application, PostgreSQL, and Kafka for local development.
+  GitHub Actions runs
   the Maven verification workflow for pull requests and pushes to maintained branches.
 
-The activation operation is simulated; no telecom network is called. Integration tests
-exercise local container behavior, not production-scale availability or broker durability.
+The activation operation is simulated; no telecom network is called. The mock's
+idempotency is process-local, so any real provider must support durable idempotency by
+event ID. Integration tests exercise local container behavior, not production-scale
+availability or broker durability.
 
 There is no reason to split this codebase into multiple deployable services or Maven modules
 yet. Creating empty package trees for every future layer would add ceremony without giving
@@ -64,7 +69,7 @@ layers it actually needs.
 .
 ├── .editorconfig
 ├── README.md
-├── compose.yaml                       # local development dependencies
+├── compose.yaml                       # local demo app and dependencies
 ├── docs/                              # product and engineering documentation
 ├── pom.xml
 └── src/

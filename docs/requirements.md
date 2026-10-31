@@ -14,9 +14,12 @@
 | FR-08 | Route exhausted consumer failures to a dead-letter topic | Implemented |
 | FR-09 | Query subscription status | Implemented |
 | FR-10 | Trace requests/events with operational identifiers and avoid logging secrets | Proposed |
+| FR-11 | Submit activation through an idempotent provider boundary | Implemented for local mock |
 
-Activation is simulated for this MVP; the application does not connect to a real telecom
-network or external activation provider.
+The local `mock` provider accepts activation requests in memory using `eventId` as its
+idempotency key. It is intentionally not durable and does not connect to a real telecom
+network or external activation provider. A production provider adapter must meet its
+provider's durable idempotency contract before deployment.
 
 ## Non-functional requirements
 
