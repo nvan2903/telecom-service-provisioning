@@ -25,7 +25,10 @@ acknowledges it. A crash after Kafka acknowledgement but before the database upd
 cause a duplicate publish; consumers must use `eventId` for idempotency.
 If Kafka is unavailable, the publisher records the failure and schedules a retry. The
 integration suite pauses and unpauses its Kafka container to verify the persisted outbox
-event is published after the broker resumes service.
+event is published after the broker resumes service. Publishers claim rows with short
+PostgreSQL transactions and expiring leases so concurrent instances normally work on
+different rows; an expired claim or a crash after Kafka acknowledgement can still cause
+redelivery.
 
 The activation consumer validates event type and schema version, then inserts
 `processed_event(event_id, consumer_name)` and moves the associated subscription from

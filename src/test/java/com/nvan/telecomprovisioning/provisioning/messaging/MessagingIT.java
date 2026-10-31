@@ -138,8 +138,12 @@ class MessagingIT {
                 .findFirst()
                 .orElseThrow();
 
+        UUID claimToken = UUID.randomUUID();
+        event.claim(claimToken, Instant.now().plusSeconds(30));
+        outboxEventRepository.saveAndFlush(event);
         outboxStateService.recordFailure(
-                event.getEventId(), "simulated temporary Kafka outage", Instant.now().plusMillis(500));
+                event.getEventId(), claimToken, "simulated temporary Kafka outage",
+                Instant.now().plusMillis(500));
 
         assertThat(outboxStateService.findReady(20))
                 .noneMatch(candidate -> candidate.getEventId().equals(event.getEventId()));
@@ -246,10 +250,42 @@ class MessagingIT {
             OutboxEvent publishedEvent = outboxEventRepository.findById(event.getEventId())
                     .orElseThrow();
             assertThat(publishedEvent.getPublishedAt()).isNotNull();
+            assertThat(publishedEvent.getAttempts()).isEqualTo(1);
             assertThat(processedEventRepository.countByEventIdAndConsumerName(
                     event.getEventId(), "subscription-activation"))
                     .isEqualTo(1);
         }
+    }
+
+    @Test
+    void reclaimsOutboxEventAfterPublisherLeaseExpires() throws Exception {
+        outboxPublisher.publishPendingEvents();
+        ServicePackage servicePackage = servicePackageRepository.save(
+                new ServicePackage("LEASE-" + UUID.randomUUID(), "Lease recovery package", true));
+        var requested = subscriptionService.requestSubscription(
+                "lease-recovery-" + UUID.randomUUID(), "lease-recovery-customer",
+                servicePackage.getId());
+        OutboxEvent event = outboxEventRepository.findAll().stream()
+                .filter(candidate -> candidate.getAggregateId().equals(requested.id().toString()))
+                .findFirst()
+                .orElseThrow();
+
+        List<OutboxEvent> firstClaim = outboxStateService.claimReady(1, Duration.ofSeconds(3));
+        assertThat(firstClaim).hasSize(1);
+        assertThat(firstClaim.getFirst().getEventId()).isEqualTo(event.getEventId());
+        assertThat(outboxStateService.findReady(20))
+                .noneMatch(candidate -> candidate.getEventId().equals(event.getEventId()));
+
+        Thread.sleep(3_100);
+        outboxPublisher.publishPendingEvents();
+
+        awaitCondition(() -> subscriptionService.getSubscription(requested.id()).status()
+                == SubscriptionStatus.ACTIVE);
+        OutboxEvent publishedEvent = outboxEventRepository.findById(event.getEventId())
+                .orElseThrow();
+        assertThat(publishedEvent.getPublishedAt()).isNotNull();
+        assertThat(publishedEvent.getClaimToken()).isNull();
+        assertThat(publishedEvent.getClaimedUntil()).isNull();
     }
 
     @RepeatedTest(3)
