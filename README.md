@@ -23,7 +23,7 @@ does not rotate the password of an existing database. Keep using the password al
 for that volume, or change it interactively without putting it in shell history:
 
 ```powershell
-docker exec -it telecom-postgres psql -U telecom_user -d telecom_db
+docker compose exec postgres psql -U telecom_user -d telecom_db
 ```
 
 At the `psql` prompt run `\password telecom_user`, enter the new password twice, then run
@@ -31,19 +31,25 @@ At the `psql` prompt run `\password telecom_user`, enter the new password twice,
 starting Compose and the application. This updates the database role without deleting
 the volume or its data.
 
-Start PostgreSQL and Kafka (single-broker KRaft):
+Start the application, PostgreSQL, and Kafka (single-broker KRaft):
 
 ```powershell
-docker compose up -d postgres kafka
+docker compose up -d --build
 ```
 
-The application running on the host connects to Kafka at `localhost:9092`. For an
-application container in the same Compose network, set `KAFKA_BOOTSTRAP_SERVERS=kafka:29092`.
-The single broker is for local development only; it does not provide high availability.
-
-Run the application:
+The app and dependency ports bind to `127.0.0.1`. The local app uses the in-memory mock
+telecom provider, so successful activation does not provision a real service. The default
+Spring Security user password is generated at startup; retrieve it with:
 
 ```powershell
+docker compose logs app
+```
+
+To run the application on the host instead, start only PostgreSQL and Kafka, then run:
+
+```powershell
+docker compose stop app
+docker compose up -d postgres kafka
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -80,7 +86,7 @@ a shared or production environment.
 - `src/test/java` — automated tests, following the production package structure.
 - `src/test/resources` — test-only configuration and fixtures.
 - `docs` — requirements, design, API, operations, and implementation documentation.
-- `compose.yaml` — local development dependencies.
+- `compose.yaml` and `Dockerfile` — local demo application and dependencies.
 
 See [docs/architecture.md](docs/architecture.md) for the current assessment and package
 organization rules.

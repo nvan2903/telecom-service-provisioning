@@ -30,12 +30,18 @@ PostgreSQL transactions and expiring leases so concurrent instances normally wor
 different rows; an expired claim or a crash after Kafka acknowledgement can still cause
 redelivery.
 
-The activation consumer validates event type and schema version, then inserts
-`processed_event(event_id, consumer_name)` and moves the associated subscription from
-`PENDING` to `ACTIVE` in the same database transaction. Repeated delivery of an already
-processed event is acknowledged without applying the state change again. Activation is
-simulated; no external telecom network is called. The integration suite verifies repeated
-delivery of the same event does not apply activation more than once.
+The activation consumer validates the event and subscription, then calls the configured
+`TelecomActivationGateway` outside a database transaction. The local `mock` provider
+accepts requests in memory and de-duplicates them by `eventId`; it does not call a carrier
+or persist provider state across restarts. After provider acceptance, the consumer inserts
+`processed_event(event_id, consumer_name)` and moves the subscription from `PENDING` to
+`ACTIVE` in one PostgreSQL transaction. Repeated delivery after that transaction is
+acknowledged without calling the provider again.
+
+If provider acceptance succeeds but the database transaction fails, Kafka redelivery
+will call the provider again with the same `eventId`. Any future real provider adapter
+must guarantee durable downstream idempotency for that key. The local mock and integration
+tests do not establish this guarantee for an external carrier.
 
 ## Retries and dead-letter topic
 

@@ -3,8 +3,8 @@ spring:
   application:
     name: telecom-service-provisioning
   datasource:
-    url: jdbc:postgresql://localhost:5432/telecom_db
-    username: telecom_user
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/telecom_db}
+    username: ${DB_USERNAME:telecom_user}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
@@ -38,6 +38,8 @@ spring:
       concurrency: 1
 
 provisioning:
+  telecom:
+    provider: ${TELECOM_PROVIDER:mock}
   messaging:
     activation-topic: ${ACTIVATION_TOPIC:subscription-activation-requested}
     consumer-name: subscription-activation
@@ -48,3 +50,12 @@ provisioning:
       fixed-delay: 1s
       batch-size: 50
       claim-duration: 30s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

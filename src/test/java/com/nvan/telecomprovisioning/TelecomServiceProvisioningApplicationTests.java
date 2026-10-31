@@ -8,6 +8,7 @@ import com.nvan.telecomprovisioning.provisioning.domain.SubscriptionStatus;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.IdempotencyRecordRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.ServicePackageRepository;
 import com.nvan.telecomprovisioning.provisioning.infrastructure.persistence.SubscriptionRepository;
+import com.nvan.telecomprovisioning.provisioning.infrastructure.telecom.MockTelecomActivationGateway;
 import com.nvan.telecomprovisioning.provisioning.messaging.EventPayloadCodec;
 import com.nvan.telecomprovisioning.provisioning.messaging.OutboxEventRepository;
 import com.nvan.telecomprovisioning.provisioning.messaging.ProcessedEventRepository;
@@ -32,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.anonymous;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -71,10 +73,21 @@ class TelecomServiceProvisioningApplicationTests {
     private SubscriptionActivationProcessor activationProcessor;
 
     @Autowired
+    private MockTelecomActivationGateway mockTelecomActivationGateway;
+
+    @Autowired
     private MockMvc mockMvc;
 
     @Test
     void contextLoads() {
+    }
+
+    @Test
+    void healthEndpointIsAvailableWithoutExposingDetails() throws Exception {
+        mockMvc.perform(get("/actuator/health").with(anonymous()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components").doesNotExist());
     }
 
     @Test
@@ -283,8 +296,11 @@ class TelecomServiceProvisioningApplicationTests {
         var outboxEvent = outboxEventRepository.findAll().getFirst();
         var event = eventPayloadCodec.decode(outboxEvent.getPayload());
 
+        int acceptedBeforeProcessing = mockTelecomActivationGateway.acceptedRequestCount();
         assertThat(activationProcessor.process(event)).isTrue();
+        assertThat(mockTelecomActivationGateway.acceptedRequestCount()).isEqualTo(acceptedBeforeProcessing + 1);
         assertThat(activationProcessor.process(event)).isFalse();
+        assertThat(mockTelecomActivationGateway.acceptedRequestCount()).isEqualTo(acceptedBeforeProcessing + 1);
         assertThat(subscriptionService.getSubscription(requested.id()).status())
                 .isEqualTo(SubscriptionStatus.ACTIVE);
         assertThat(processedEventRepository.count()).isEqualTo(1);
